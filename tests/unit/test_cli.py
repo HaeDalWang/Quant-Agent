@@ -52,3 +52,23 @@ def test_all_failure_returns_nonzero(monkeypatch):
 
     monkeypatch.setattr("quant_agent.collectors.price.fdr.DataReader", _boom)
     assert main(["collect", "--market", "KR"]) == 1
+
+
+def test_analyze_returns_zero():
+    """analyze는 데이터가 부족해도(스킵) 정상 종료(0)."""
+    assert main(["analyze"]) == 0
+
+
+def test_daily_returns_zero():
+    """daily는 수집 성공 시 0 (분석은 봉 부족으로 스킵되지만 무관)."""
+    assert main(["daily"]) == 0
+
+
+def test_daily_all_collection_failure_returns_nonzero(monkeypatch):
+    """daily에서 수집이 전량 실패하면 종료 코드 1."""
+
+    def _boom(*a, **k):
+        raise ValueError("네트워크 다운")
+
+    monkeypatch.setattr("quant_agent.collectors.price.fdr.DataReader", _boom)
+    assert main(["daily"]) == 1
