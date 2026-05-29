@@ -20,6 +20,20 @@ from quant_agent.collectors.base import (
 from quant_agent.universe.models import Market, Symbol
 
 
+@pytest.fixture(autouse=True)
+def _block_external_services(monkeypatch):
+    """모든 테스트에서 실제 외부 서비스 시크릿을 차단한다 (안전 가드).
+
+    테스트가 실수로 진짜 Discord webhook이나 DART API로 나가는 것을 원천 차단한다.
+
+    주의: pydantic-settings는 환경변수가 없으면 .env 파일을 읽으므로, delenv로는
+    부족하다(.env의 실제 URL로 폴백됨). 환경변수를 빈 문자열로 강제 설정해 .env
+    값을 덮어써야 한다 — 그러면 채널 팩토리가 ConsoleChannel로 폴백한다.
+    """
+    monkeypatch.setenv("QA_DISCORD_WEBHOOK_URL", "")
+    monkeypatch.setenv("QA_DART_API_KEY", "")
+
+
 def make_ohlcv(symbol_key: str, days: list[date]) -> pd.DataFrame:
     """주어진 날짜들로 OHLCV 표준 스키마 DataFrame을 만든다."""
     rows = [
