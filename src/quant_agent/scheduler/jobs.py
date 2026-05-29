@@ -11,8 +11,10 @@ import logging
 from collections.abc import Iterable
 from datetime import date
 
+from quant_agent.alerts.factory import build_channel
 from quant_agent.collectors.price import FinanceDataReaderCollector
 from quant_agent.config.settings import Settings
+from quant_agent.service.analysis import AnalysisResult, AnalysisService
 from quant_agent.service.collection import CollectionService
 from quant_agent.service.results import BatchResult
 from quant_agent.storage.duckdb_store import DuckDBStore
@@ -51,3 +53,25 @@ def collect_market(settings: Settings, market: Market) -> BatchResult:
 def collect_all(settings: Settings) -> BatchResult:
     """전체 Tier 1 종목(KR+US)을 한 번에 수집한다."""
     return run_collection(settings, tier1_symbols())
+
+
+def run_analysis(
+    settings: Settings,
+    symbols: Iterable[Symbol],
+    report_date: date | None = None,
+) -> AnalysisResult:
+    """주어진 종목들을 분석하고 알림·리포트를 생성한다 (자기완결).
+
+    저장소를 열고, 채널을 구성(Discord 또는 콘솔 폴백)한 뒤 분석한다.
+    수집과 마찬가지로 트리거(로컬/CI/Lambda)에 무관하게 동일 동작한다.
+    """
+    channel = build_channel(settings)
+    with DuckDBStore(settings.duckdb_path) as store:
+        service = AnalysisService(store, channel)
+        return service.analyze(symbols, report_date=report_date)
+
+
+def analyze_all(settings: Settings) -> AnalysisResult:
+    """전체 Tier 1 종목(KR+US)을 분석한다."""
+    logger.info("분석 시작: 전체 Tier1")
+    return run_analysis(settings, tier1_symbols())

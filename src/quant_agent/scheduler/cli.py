@@ -1,10 +1,11 @@
 """CLI 진입점.
 
-두 가지 실행 모드를 제공한다:
+세 가지 실행 모드를 제공한다:
 - `collect`: 수집을 1회 실행하고 종료한다. 테스트·GitHub Actions·Lambda에 적합.
-- `run`: APScheduler 데몬을 띄워 장마감 시각마다 수집한다. 로컬 상시 실행에 적합.
+- `analyze`: 저장된 데이터를 분석해 알림·리포트를 1회 생성하고 종료한다.
+- `run`: APScheduler 데몬을 띄워 장마감 시각마다 수집·분석한다. 로컬 상시 실행에 적합.
 
-같은 잡(scheduler.jobs)을 양쪽이 공유하므로, 트리거 방식이 바뀌어도 수집 로직은 불변.
+같은 잡(scheduler.jobs)을 모드들이 공유하므로, 트리거 방식이 바뀌어도 로직은 불변.
 """
 
 from __future__ import annotations
@@ -15,7 +16,11 @@ import sys
 
 from quant_agent.config.logging_setup import setup_logging
 from quant_agent.config.settings import Settings, load_settings
-from quant_agent.scheduler.jobs import collect_all, collect_market
+from quant_agent.scheduler.jobs import (
+    analyze_all,
+    collect_all,
+    collect_market,
+)
 from quant_agent.universe.models import Market
 
 logger = logging.getLogger(__name__)
@@ -24,6 +29,8 @@ logger = logging.getLogger(__name__)
 # KR 정규장 마감 15:30 → 16:00 수집. US 정규장 마감(ET 16:00) → 익일 아침 KST.
 _KR_HOUR, _KR_MINUTE = 16, 0
 _US_HOUR, _US_MINUTE = 7, 0
+# 분석은 양 시장 수집이 끝난 뒤 (US 수집 07:00 직후) 실행.
+_ANALYZE_HOUR, _ANALYZE_MINUTE = 7, 30
 _TIMEZONE = "Asia/Seoul"
 
 
@@ -41,6 +48,13 @@ def _cmd_collect(args: argparse.Namespace, settings: Settings) -> int:
     if batch.total > 0 and len(batch.failed) == batch.total:
         logger.error("모든 종목 수집 실패")
         return 1
+    return 0
+
+
+def _cmd_analyze(args: argparse.Namespace, settings: Settings) -> int:
+    """분석 1회 실행 — 알림·리포트 생성."""
+    result = analyze_all(settings)
+    print(result.summary())
     return 0
 
 
@@ -63,6 +77,13 @@ def _cmd_run(args: argparse.Namespace, settings: Settings) -> int:
         CronTrigger(day_of_week="tue-sat", hour=_US_HOUR, minute=_US_MINUTE),
         id="collect_us",
         name="US Tier1 수집",
+    )
+    # 분석: 평일 07:30 (양 시장 수집 직후) — 알림·리포트 생성
+    scheduler.add_job(
+        lambda: analyze_all(settings),
+        CronTrigger(day_of_week="tue-sat", hour=_ANALYZE_HOUR, minute=_ANALYZE_MINUTE),
+        id="analyze",
+        name="Tier1 분석·알림·리포트",
     )
 
     logger.info("스케줄러 시작 (timezone=%s). 종료하려면 Ctrl+C.", _TIMEZONE)
@@ -88,6 +109,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="수집 대상 시장 (기본: all)",
     )
     p_collect.set_defaults(func=_cmd_collect)
+
+    p_analyze = sub.add_parser("analyze", help="저장된 데이터를 분석해 알림·리포트를 1회 생성")
+    p_analyze.set_defaults(func=_cmd_analyze)
 
     p_run = sub.add_parser("run", help="스케줄러 데몬 실행 (상시)")
     p_run.set_defaults(func=_cmd_run)

@@ -6,7 +6,7 @@ fake를 제공한다.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
@@ -33,6 +33,36 @@ def make_ohlcv(symbol_key: str, days: list[date]) -> pd.DataFrame:
             "volume": 1000 + i,
         }
         for i, d in enumerate(days)
+    ]
+    return pd.DataFrame(rows, columns=list(OHLCV_COLUMNS))
+
+
+def make_ohlcv_series(
+    symbol_key: str,
+    closes: list[float],
+    *,
+    start: date = date(2026, 1, 1),
+    volumes: list[float] | None = None,
+    high_offset: float = 1.0,
+    low_offset: float = 1.0,
+) -> pd.DataFrame:
+    """종가 리스트로 N개 봉의 OHLCV를 만든다 (지표 테스트용).
+
+    high = close + high_offset, low = close - low_offset로 단순 구성한다.
+    """
+    n = len(closes)
+    vols = volumes if volumes is not None else [1000.0] * n
+    rows = [
+        {
+            "symbol_key": symbol_key,
+            "dt": start + timedelta(days=i),
+            "open": closes[i],
+            "high": closes[i] + high_offset,
+            "low": closes[i] - low_offset,
+            "close": closes[i],
+            "volume": vols[i],
+        }
+        for i in range(n)
     ]
     return pd.DataFrame(rows, columns=list(OHLCV_COLUMNS))
 
