@@ -42,6 +42,17 @@ class Settings(BaseSettings):
         default=None, description="국내 공시(DART) OpenAPI 키 (Phase 1)"
     )
 
+    # --- 한국투자증권(KIS) API 시크릿 (계좌 연동, 읽기 전용 우선) ---
+    kis_app_key: str | None = Field(default=None, description="KIS App Key")
+    kis_app_secret: str | None = Field(default=None, description="KIS App Secret")
+    kis_account_cano: str | None = Field(default=None, description="KIS 계좌번호 앞 8자리 (CANO)")
+    kis_account_prdt_cd: str | None = Field(
+        default=None, description="KIS 계좌상품코드 뒤 2자리 (ACNT_PRDT_CD)"
+    )
+    kis_paper_trading: bool = Field(
+        default=False, description="모의투자 여부 (True=모의, False=실전)"
+    )
+
     # --- 운영 ---
     log_level: str = Field(default="INFO", description="로깅 레벨")
 

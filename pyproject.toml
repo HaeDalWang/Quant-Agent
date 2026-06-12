@@ -20,6 +20,9 @@ dev = [
     "pytest-cov>=5.0.0",
     "ruff>=0.7.0",
 ]
+aws = [
+    "boto3>=1.35.0",
+]
 
 [project.scripts]
 quant-agent = "quant_agent.scheduler.cli:main"
