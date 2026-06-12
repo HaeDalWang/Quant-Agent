@@ -114,3 +114,60 @@ def test_summary_format(store):
     service = AnalysisService(store, channel)
     result = service.analyze([Symbol("AAPL", "Apple", Market.US)])
     assert "분석" in result.summary()
+
+
+# --- 브로커 주입 + 실패 격리 ---
+
+
+def test_account_reflected_in_report(store):
+    """주입된 브로커의 계좌가 리포트 포트폴리오 섹션에 반영된다."""
+    from quant_agent.broker.base import Account, Broker, Position
+
+    channel = FakeChannel()
+    _seed(store, "US:AAPL", [float(100 + i) for i in range(MIN_BARS + 5)])
+
+    class FakeBroker(Broker):
+        def get_account(self) -> Account:
+            return Account(
+                cash=1000.0,
+                positions=(Position(Symbol("AAPL", "Apple", Market.US), 10, 300.0, 312.0),),
+            )
+
+    service = AnalysisService(store, channel, broker=FakeBroker())
+    service.analyze([Symbol("AAPL", "Apple", Market.US)])
+
+    _title, markdown = channel.reports[0]
+    assert "내 포트폴리오" in markdown
+    assert "총 자산" in markdown
+
+
+def test_broker_failure_is_isolated(store):
+    """브로커 조회 실패가 리포트 전송을 막지 않는다 (포트폴리오만 생략)."""
+    from quant_agent.broker.base import Account, Broker
+
+    channel = FakeChannel()
+    _seed(store, "US:AAPL", [float(100 + i) for i in range(MIN_BARS + 5)])
+
+    class BoomBroker(Broker):
+        def get_account(self) -> Account:
+            raise RuntimeError("KIS 인증 실패")
+
+    service = AnalysisService(store, channel, broker=BoomBroker())
+    result = service.analyze([Symbol("AAPL", "Apple", Market.US)])
+
+    # 리포트는 여전히 전송되고, 분석도 정상
+    assert len(channel.reports) == 1
+    assert len(result.analyses) == 1
+    # 포트폴리오 섹션만 빠짐
+    _title, markdown = channel.reports[0]
+    assert "내 포트폴리오" not in markdown
+
+
+def test_no_broker_omits_portfolio(store):
+    """브로커 미주입 시 포트폴리오 없이 정상 동작 (기존 동작)."""
+    channel = FakeChannel()
+    _seed(store, "US:AAPL", [float(100 + i) for i in range(MIN_BARS + 5)])
+    service = AnalysisService(store, channel)
+    service.analyze([Symbol("AAPL", "Apple", Market.US)])
+    _title, markdown = channel.reports[0]
+    assert "내 포트폴리오" not in markdown

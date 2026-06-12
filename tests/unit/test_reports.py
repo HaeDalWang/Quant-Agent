@@ -6,7 +6,9 @@ from datetime import date
 
 from quant_agent.alerts.base import Alert, AlertLevel
 from quant_agent.analysis.signals import IndicatorSnapshot
+from quant_agent.broker.base import Account, Position
 from quant_agent.reports.daily import SymbolAnalysis, build_daily_report
+from quant_agent.universe.models import Market, Symbol
 
 
 def _snap(symbol_key: str, **overrides) -> IndicatorSnapshot:
@@ -90,3 +92,64 @@ def test_report_table_sorted_by_symbol():
     md = build_daily_report(date(2026, 5, 1), analyses)
     # AAPL이 MSFT보다 먼저 나와야 함
     assert md.index("US:AAPL") < md.index("US:MSFT")
+
+
+# --- 포트폴리오 섹션 ---
+
+
+def _position(code: str, qty: float, avg: float, cur: float) -> Position:
+    return Position(
+        symbol=Symbol(code, code, Market.US),
+        quantity=qty,
+        avg_price=avg,
+        current_price=cur,
+    )
+
+
+def test_report_omits_portfolio_when_no_account():
+    """account 미제공 시 포트폴리오 섹션이 없다 (하위 호환)."""
+    analyses = [SymbolAnalysis(snapshot=_snap("US:AAPL"), alerts=())]
+    md = build_daily_report(date(2026, 5, 1), analyses)
+    assert "내 포트폴리오" not in md
+
+
+def test_report_includes_portfolio_when_account_given():
+    analyses = [SymbolAnalysis(snapshot=_snap("US:AAPL"), alerts=())]
+    account = Account(cash=1000.0, positions=(_position("AAPL", 10, 300.0, 312.0),))
+    md = build_daily_report(date(2026, 5, 1), analyses, account=account)
+    assert "내 포트폴리오" in md
+    assert "총 자산" in md
+    assert "US:AAPL" in md
+
+
+def test_report_portfolio_empty_positions():
+    analyses = [SymbolAnalysis(snapshot=_snap("US:AAPL"), alerts=())]
+    account = Account(cash=5000.0)
+    md = build_daily_report(date(2026, 5, 1), analyses, account=account)
+    assert "내 포트폴리오" in md
+    assert "보유 종목이 없습니다" in md
+
+
+def test_report_portfolio_marks_alerted_holding():
+    """보유종목 중 알림 뜬 종목은 🔔로 표시된다."""
+    analyses = [
+        SymbolAnalysis(
+            snapshot=_snap("US:AAPL"),
+            alerts=(Alert("RSI 과매수", "RSI=78", AlertLevel.WARNING, "US:AAPL"),),
+        ),
+        SymbolAnalysis(snapshot=_snap("US:MSFT"), alerts=()),
+    ]
+    account = Account(
+        cash=1000.0,
+        positions=(
+            _position("AAPL", 10, 300.0, 312.0),  # 알림 있음 → 🔔
+            _position("MSFT", 5, 400.0, 410.0),  # 알림 없음
+        ),
+    )
+    md = build_daily_report(date(2026, 5, 1), analyses, account=account)
+    # 포트폴리오 표에서 AAPL 행에만 🔔
+    portfolio_part = md[md.index("내 포트폴리오") :]
+    aapl_line = next(ln for ln in portfolio_part.splitlines() if "US:AAPL" in ln)
+    msft_line = next(ln for ln in portfolio_part.splitlines() if "US:MSFT" in ln)
+    assert "🔔" in aapl_line
+    assert "🔔" not in msft_line

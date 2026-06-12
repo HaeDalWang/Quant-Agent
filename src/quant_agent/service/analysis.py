@@ -23,6 +23,7 @@ from datetime import date
 from quant_agent.alerts.base import AlertChannel
 from quant_agent.alerts.rules import DEFAULT_RULES, Rule, evaluate
 from quant_agent.analysis.signals import compute_snapshot
+from quant_agent.broker.base import Account, Broker
 from quant_agent.reports.daily import SymbolAnalysis, build_daily_report
 from quant_agent.storage.base import Store
 from quant_agent.universe.models import Symbol
@@ -60,10 +61,12 @@ class AnalysisService:
         store: Store,
         channel: AlertChannel,
         rules: tuple[Rule, ...] = DEFAULT_RULES,
+        broker: Broker | None = None,
     ) -> None:
         self._store = store
         self._channel = channel
         self._rules = rules
+        self._broker = broker
 
     def analyze(self, symbols: Iterable[Symbol], report_date: date | None = None) -> AnalysisResult:
         """종목들을 분석하고 알림 전송 + 리포트 생성한다 (장애 격리)."""
@@ -111,8 +114,23 @@ class AnalysisService:
         for alert in analysis.alerts:
             self._channel.send(alert)
 
+    def _fetch_account(self) -> Account | None:
+        """브로커에서 계좌를 조회한다. 실패는 격리한다(None 반환).
+
+        브로커 조회 실패(KIS 인증·네트워크 등)가 시장 분석 리포트 전송을
+        막아서는 안 된다 — 계좌 없이 리포트는 그대로 나간다.
+        """
+        if self._broker is None:
+            return None
+        try:
+            return self._broker.get_account()
+        except Exception:
+            logger.exception("계좌 조회 실패 — 포트폴리오 없이 리포트 생성")
+            return None
+
     def _send_report(self, report_date: date, result: AnalysisResult) -> None:
-        """일별 리포트를 생성·전송한다."""
-        markdown = build_daily_report(report_date, result.analyses)
+        """일별 리포트를 생성·전송한다 (계좌 있으면 포트폴리오 포함)."""
+        account = self._fetch_account()
+        markdown = build_daily_report(report_date, result.analyses, account=account)
         title = f"일별 리포트 {report_date.isoformat()}"
         self._channel.send_report(title, markdown)
