@@ -27,32 +27,47 @@
 
 핵심: **AI 경계 아래는 결정론적**이다. 같은 입력이면 같은 출력. 이게 보장돼야 위에서 AI가 무엇을 보고 판단했는지 재현·감사할 수 있다.
 
-## 디렉토리 구조 (목표)
+## 디렉토리 구조 (현행 + 목표)
 
-```
+> `src/quant_agent/` 아래. (목표)는 아직 미구현, 나머지는 구현됨.
+
+```text
 quant-agent/
 ├── collectors/          # 데이터 수집 — 소스별 구현, 공통 인터페이스 뒤에
 │   ├── base.py          # Collector 추상 인터페이스 (Repository 패턴)
 │   ├── price.py         # FinanceDataReader 어댑터 (KR+US 시세)
-│   ├── disclosure.py    # DART 공시 (KR)
-│   └── news.py          # 뉴스/RSS
+│   ├── disclosure.py    # (목표) DART 공시 (KR)
+│   └── news.py          # (목표) 뉴스/RSS
 ├── storage/             # 시계열 저장 추상화
 │   ├── base.py          # Store 인터페이스
 │   └── duckdb_store.py   # DuckDB 구현체
 ├── analysis/            # 지표 계산 (순수 함수, 불변 입출력)
-│   ├── indicators.py    # 이동평균/RSI/MACD/ATR (pandas-ta 래핑)
-│   └── signals.py       # 지표 → 신호 변환
+│   ├── indicators.py    # 이동평균/RSI/MACD/ATR (pandas 내장 직접 구현)
+│   └── signals.py       # 지표 → 신호 변환 (최신봉 스냅샷)
 ├── alerts/              # 알림
-│   ├── base.py          # AlertChannel 인터페이스
+│   ├── base.py          # AlertChannel 인터페이스 + Alert 값객체
+│   ├── console.py       # 콘솔 채널 (기본·테스트, 네트워크 무관)
 │   ├── discord.py       # Discord webhook 구현체
+│   ├── factory.py       # 설정 기반 채널 선택 (webhook 있으면 Discord)
 │   └── rules.py         # 규칙 엔진 (조건 → 알림 트리거)
-├── reports/             # 정기 리포트 생성 (마크다운/HTML)
+├── reports/             # 정기 리포트 생성 (마크다운) + 포트폴리오 섹션
 ├── universe/            # 종목 유니버스 관리
-│   ├── tiers.py         # Tier 1 코어 + Tier 2 동적 스캔
-│   └── screener.py      # 조건 기반 스크리닝
-├── scheduler/           # APScheduler 진입점, 잡 정의
-├── config/              # 유니버스·규칙·시크릿(env) 설정
-├── agents/              # (Phase 2+) LLM 에이전트
+│   ├── models.py        # Market/Symbol 값객체
+│   ├── tiers.py         # Tier 1 코어 (수동 큐레이션)
+│   └── screener.py      # (목표) Tier 2 조건 기반 동적 스캔
+├── broker/              # 증권 계좌 추상화 (읽기 전용)
+│   └── base.py          # Broker 인터페이스 + Account/Position 값객체
+├── secrets/             # 시크릿 백엔드 추상화
+│   ├── base.py          # SecretProvider 인터페이스
+│   ├── env_provider.py  # .env 패스스루 (로컬 기본)
+│   ├── aws_provider.py  # AWS Secrets Manager (optional extra)
+│   └── bootstrap.py     # 백엔드 선택 → 환경 주입 → Settings 로드
+├── service/             # 수집·분석 오케스트레이션 (장애 격리)
+│   ├── collection.py    # 수집 (trailing overlap 자가 교정)
+│   └── analysis.py      # 분석 → 알림/리포트 와이어링
+├── scheduler/           # CLI 진입점 + 잡 정의 (collect/analyze/daily/run)
+├── config/              # Settings(pydantic) + 로깅 설정
+├── agents/              # (목표, Phase 2+) LLM 에이전트
 └── data/                # DuckDB 파일, 캐시 (gitignore)
 ```
 
@@ -124,7 +139,8 @@ LLM 미래 기능 관점에서 Discord가 Telegram보다 유리한 지점:
 ## 비기능 요구사항
 
 - **재현성**: AI 경계 아래는 결정론적. 잡 실행은 멱등(idempotent)하게.
-- **장애 격리**: 한 종목 수집 실패가 전체 파이프라인을 죽이지 않는다. 수집은 종목 단위로 격리.
-- **시크릿 관리**: API 키·웹훅 URL은 `.env` (절대 커밋 금지). 시작 시 필수 시크릿 존재 검증.
-- **레이트 리밋**: 외부 API 호출은 재시도·백오프. 무료 데이터 소스 차단 방지.
+- **장애 격리**: 한 종목 수집 실패가 전체 파이프라인을 죽이지 않는다. 수집·분석 모두 종목 단위로 격리.
+- **시크릿 관리**: `secrets/` 추상화로 로컬(.env)·클라우드(AWS Secrets Manager)를 한 인터페이스 뒤에 둠. 절대 커밋 금지, 시작 시 필수 시크릿 검증.
+- **자가 교정**: 수집은 매번 최근 N일을 겹쳐 재수집(trailing overlap) — 장초반 잠정 거래량을 확정값으로 덮어쓴다(멱등 upsert).
+- **레이트 리밋**: 외부 API 호출 재시도·백오프는 미구현(목표). 현재는 종목 단위 격리로 부분 실패를 흡수.
 - **관측성**: 모든 잡은 시작/종료/실패를 구조화 로그로 남긴다 (나중에 에이전트 컨텍스트로도 활용).

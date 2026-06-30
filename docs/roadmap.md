@@ -5,18 +5,48 @@
 
 ---
 
-## Phase 0 — Foundation (수집·저장·스케줄)
+## 현재 상태 (2026-06-30 기준)
+
+```text
+Phase 0  데이터 수집·저장·스케줄      ✅ 완료 (자동 적재 한 달+ 검증)
+Phase 1  분석·알림·리포트            🟡 핵심 루프 완료, 잔여 항목 있음
+─────────────────────────────────  ← 지금 여기
+Phase 2  LLM 에이전트 (paper)       ⬜ 미착수
+Phase 3  멀티에이전트 토론           ⬜ 미착수
+Phase 4  승인 게이트 + 실행          ⬜ 미착수
+```
+
+**Phase 1 잔여 (미완)**: `universe/screener.py`(Tier 2 동적 스캔), DART 공시·뉴스
+수집, 주간 리포트. 핵심 루프(지표→규칙→알림→일별 리포트)는 완료됨.
+
+**원래 계획에서 앞당기거나 확장한 것**:
+- `broker/base.py` 읽기전용 인터페이스 — 원래 Phase 4였으나, KIS 계좌 연동
+  대비해 읽기전용(get_account)만 미리 구현. 주문 실행은 여전히 Phase 4.
+- 시크릿 — 원래 ".env만"이었으나 `secrets/` 추상화로 AWS Secrets Manager까지 지원.
+- 리포트 포트폴리오 섹션 — 보유종목 중 알림 뜬 것을 🔔로 강조 (broker 연동 대비).
+- 운영 — `daily` CLI 명령 + `daliy.sh`(cron/launchd 공용) 추가.
+
+**구현 메모 (계획 대비 의도적 변경)**:
+- 지표는 `pandas-ta`가 아니라 pandas 내장(`ewm`/`rolling`)으로 직접 구현 — numba
+  무거운 의존성 회피, MA/RSI/MACD/ATR 4종이면 충분(YAGNI).
+- KR 수집 타이밍 버그(장초반 잠정 거래량 고착)는 trailing overlap 재수집으로 해결 —
+  매 수집 시 최신일에서 N일 거슬러 겹쳐 받아 확정값으로 자가 교정(멱등 upsert).
+
+---
+
+## Phase 0 — Foundation (수집·저장·스케줄) ✅
 
 **목표**: 데이터가 매일 자동으로, 안정적으로 쌓인다.
 
 ### 작업
-- [ ] `collectors/base.py` — Collector 인터페이스
-- [ ] `collectors/price.py` — FinanceDataReader 어댑터 (KR+US 시세)
-- [ ] `storage/base.py` + `storage/duckdb_store.py` — 멱등 저장
-- [ ] `config/` — 종목 유니버스(Tier 1), `.env` 시크릿 로딩 + 검증
-- [ ] `scheduler/` — 장마감 후 일별 수집 잡 (시장별 분리)
-- [ ] 종목 단위 장애 격리 + 재시도/백오프
-- [ ] 구조화 로깅
+- [x] `collectors/base.py` — Collector 인터페이스
+- [x] `collectors/price.py` — FinanceDataReader 어댑터 (KR+US 시세)
+- [x] `storage/base.py` + `storage/duckdb_store.py` — 멱등 저장
+- [x] `config/` — 종목 유니버스(Tier 1), `.env` 시크릿 로딩 + 검증
+- [x] `scheduler/` — 장마감 후 일별 수집 잡 (시장별 분리)
+- [x] 종목 단위 장애 격리 (+ trailing overlap 자가 교정)
+- [x] 구조화 로깅
+- [ ] 재시도/백오프 — 미구현 (현재 종목 단위 격리로 충분, 필요 시 추가)
 
 ### 완료 기준 (DoD)
 - ✅ Tier 1 종목의 일별 OHLCV가 DuckDB에 자동 적재된다.
@@ -33,18 +63,18 @@
 **목표**: 데이터에서 신호를 뽑고, 조건 충족 시 Discord로 알림이 오고, 정기 리포트가 자동 생성된다.
 
 ### 작업
-- [ ] `analysis/indicators.py` — MA/RSI/MACD/ATR (pandas-ta 래핑, 순수 함수)
-- [ ] `analysis/signals.py` — 지표 → 신호 변환
-- [ ] `alerts/base.py` + `alerts/discord.py` — AlertChannel + Discord webhook
-- [ ] `alerts/rules.py` — 규칙 엔진 (조건 → 트리거)
-- [ ] `universe/screener.py` — Tier 2 동적 스캔
-- [ ] `reports/` — 정기(일/주간) 마크다운 리포트
-- [ ] DART 공시·뉴스 수집 추가 (`collectors/disclosure.py`, `news.py`)
+- [x] `analysis/indicators.py` — MA/RSI/MACD/ATR (pandas 내장 직접 구현, 순수 함수)
+- [x] `analysis/signals.py` — 지표 → 신호 변환
+- [x] `alerts/base.py` + `alerts/discord.py` — AlertChannel + Discord webhook (+ console)
+- [x] `alerts/rules.py` — 규칙 엔진 (조건 → 트리거)
+- [ ] `universe/screener.py` — Tier 2 동적 스캔 (미완)
+- [x] `reports/` — 일별 마크다운 리포트 (주간은 미완)
+- [ ] DART 공시·뉴스 수집 추가 (`collectors/disclosure.py`, `news.py`) (미완)
 
 ### 완료 기준 (DoD)
 - ✅ 정의된 규칙(예: RSI 과매도 + 거래량 급증) 충족 시 Discord 알림이 온다.
-- ✅ 매일/매주 종합 리포트가 자동 생성·전송된다.
-- ✅ Tier 2 스크리너가 조건 기반으로 후보를 편입/이탈시킨다.
+- 🟡 매일 종합 리포트 자동 생성·전송 (주간 리포트는 미완).
+- ⬜ Tier 2 스크리너가 조건 기반으로 후보를 편입/이탈시킨다. (미착수)
 - ✅ 모든 신호·선정에 구조화된 사유 로그가 남는다.
 
 > **AI 없음.** 규칙 기반. 이 기반이 단단해야 위에 에이전트를 신뢰할 수 있다.

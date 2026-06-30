@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 # 신규 종목의 초기 백필 기간(일). 지표 워밍업을 고려해 약 1년 이상 확보.
 DEFAULT_BACKFILL_DAYS = 365
 
+# 매 수집 시 최신일에서 거슬러 다시 받는 일수 (잠정 거래량 자가 교정).
+# KR 장초반 수집 시 거래량이 잠정값으로 저장되는데, 다음 수집에서 이 구간을
+# 겹쳐 재수집하면 확정값으로 덮어쓰인다(upsert 멱등). 주말·휴장 포함 충분한 5일.
+DEFAULT_TRAILING_OVERLAP_DAYS = 5
+
 
 class CollectionService:
     """Tier 1 종목의 일별 OHLCV를 수집·저장한다."""
@@ -34,10 +39,12 @@ class CollectionService:
         collector: Collector,
         store: Store,
         backfill_days: int = DEFAULT_BACKFILL_DAYS,
+        trailing_overlap_days: int = DEFAULT_TRAILING_OVERLAP_DAYS,
     ) -> None:
         self._collector = collector
         self._store = store
         self._backfill_days = backfill_days
+        self._trailing_overlap_days = trailing_overlap_days
 
     def collect(self, symbols: Iterable[Symbol], end: date | None = None) -> BatchResult:
         """여러 종목을 장애 격리하며 수집한다.
@@ -85,11 +92,13 @@ class CollectionService:
             return SymbolResult(symbol.key, CollectionStatus.FAILED, error=f"unexpected: {exc}")
 
     def _incremental_start(self, symbol_key: str, end: date) -> date:
-        """저장된 최신 거래일 다음 날을 시작일로 계산한다.
+        """수집 시작일을 계산한다.
 
         저장 이력이 없으면 backfill_days만큼 거슬러 올라간 날짜부터.
+        이력이 있으면 최신 거래일에서 trailing_overlap_days만큼 거슬러 재수집한다
+        — 최근 며칠을 겹쳐 받아 잠정 거래량(장초반 수집분)을 확정값으로 덮어쓴다.
         """
         latest = self._store.latest_date(symbol_key)
         if latest is None:
             return end - timedelta(days=self._backfill_days)
-        return date.fromisoformat(latest) + timedelta(days=1)
+        return date.fromisoformat(latest) - timedelta(days=self._trailing_overlap_days)
